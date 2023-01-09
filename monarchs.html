@@ -1,0 +1,57 @@
+#Load the needed packages
+
+library("tidyverse")
+
+#Read the data from my created spreadsheet into a data frame called 'monarchs'
+
+monarchs <- read_csv("danish_monarchs.csv")
+
+#Then i can create a ggplot with my data from my data sheet
+
+plot <- ggplot(data = monarchs, aes(x=start, y=end))+
+  geom_segment(aes(x=start, y=end, xend=start, yend=end))+
+  scale_x_continuous(limits = c(900,1100))+
+  scale_y_continuous(limits = c(900,1100))+
+  labs(x="Start Year", y="End Year", title = "Duration of Reign amon Danish Monarchs throug Time")+
+  theme(plot.title = element_text(size = 16,face = "bold"))
+
+plot
+
+#It shows that there are some errors, which indicates that there some missing values
+
+is.na(monarchs)
+
+#It seems like my datasheet hasn't been properly formatted or seperated, which is why I have to fix that by using the tidyr package
+
+library(tidyverse)
+library(tidyr)
+
+monarchs <- monarchs %>% 
+  separate(col = 1, into = c("name","birth_year","year_acceded","start_reign_year","end_reign_year","reign_period"), sep=";")
+
+#It finally works and then I can continue to make the visualization. 
+
+library(tidyverse)
+library(ggplot2)
+
+#This visualization creates a bar chart that shows the duration of each monarch's regin as a horizontal bar.
+ggplot(data = monarchs, aes(x = year_acceded, y = reign_period)) +
+  geom_bar(stat = "identity")
+
+#This visualization shows the duration of reign among the monarchs through time:
+ggplot(data = monarchs, aes(x = year_acceded, y = reign_period)) +
+  geom_bar(stat = "identity") +
+  xlab("Year Acceded") +
+  ylab("Reign Period (Years)") +
+  theme(plot.title = element_text(face = "bold", size = 14)) +
+  ggtitle("Duration of Reign Among Danish Monarchs Through Time")
+
+#For the rmarkdown
+
+install.packages("knitr")
+install.packages("rmarkdown")
+
+library(knitr)
+library(rmarkdown)
+
+rmarkdown::draft("monarchs.Rmd", template = "html_document", package = "rmarkdown")
