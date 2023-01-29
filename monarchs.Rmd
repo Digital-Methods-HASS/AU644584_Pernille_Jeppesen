@@ -1,0 +1,72 @@
+---
+title: "Danish Monarchs"
+author: "Pernille Jeppesen"
+date: "2023-01-23"
+output: html_document
+---
+## Visualization over the Danish monarchs through time
+
+For this task I want to create a visualization over the Danish monarchs through time, where the data is from a spreadsheet, which I created in a former spreadsheet. 
+For this task I will need to load the packages I will be using:
+
+```{r}
+library("tidyverse")
+library("tidyr")
+library("dplyr")
+```
+
+#Load the data
+Then I will load the data from the spreadsheet I created into a data frame called monarchs. 
+Here I also made sure, that my coloumn over the "reign_period" is numeric.
+
+```{r}
+getwd()
+monarchs <- read.csv("danish_monarchs.csv", header = TRUE, sep = ";")
+
+is.na(monarchs)
+
+monarchs$reign_period <- as.numeric(monarchs$reign_period)
+
+```
+#The Visualization
+For my visualization I want to use a ggplot to make a simple chart over the reign period of the Danish Monarchs.
+The chart I want to create is with the name of the monarch on the x axis and the time of their reign on the y axis.
+
+```{r}
+ggplot(data = monarchs,
+       aes(x = name,
+           y = reign_period)) +
+  geom_bar(stat = "identity")
+```
+
+#Second Try
+
+This chart is showing what I told it to do, but it is very cramped, which is why I want to make another chart which is more readable and easy on the eye. That why I added the theme and choose to make the angle of the names on the x axis 45 degrees to make it more readable.
+
+```{r}
+ggplot(data = monarchs,
+       aes(x = name,
+           y = reign_period)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#Third try
+
+My second try still looks cramped, but it's better. Therefore I wanted to make the last try with just the monarchs who have reigned for the longest period. 
+Here I made another dataframe called "top_monarchs" where I choose the ones who reign the longest. 
+Afterwards I made a new chart only with the top_monarchs dataframe and still chose to angle the names on the x axis because it made it more readable.
+
+```{r}
+library(dplyr)
+
+top_monarchs <- monarchs %>%
+  arrange(desc(reign_period)) %>%
+  top_n(n = 10)
+
+ggplot(data = top_monarchs,
+       aes(x = name,
+           y = reign_period)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
