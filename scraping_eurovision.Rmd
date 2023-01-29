@@ -1,0 +1,452 @@
+---
+title: "Scraping police-killing data with R"
+author: "Pernille Dahl Jepesen"
+date: "20 July 2020, updated `r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Goal
+I want to be able to analyse the data on police shootings from 2013-2020 (july 2020) that were through 2020 nicely collated on summarised on https://killedbypolice.net/kbp2020. That domain, however, no longer exists - or rather - has been rerouted to https://robarguns.com/kbp2020 and so we will be using the *archived version* of the site at http://web.archive.org/web/20200502072010/https://killedbypolice.net/kbp2020/. Check it out! Can you spot *the differences* between the current and archived tables?  The archived version is a bit messier through time (dates are not standardized in the early years of collection), but it contains additional variables such as `Race` and `Method` which are missing from the most recent source.
+You are welcome to scrape the current source, but if you want to visualise results by Race or Method of killing, you will also need to scrape the archival site.
+
+# Challenge
+The data resides in a HTML table that has notoriously messy headers and tags. There is one table for each individual year. Look and weep:
+!["Killed by police website with html source"](./readme-figs/Killed_html.png)
+
+But fear not! There’s nothing that R can’t fix in a blink of an eye. And here’s how:
+
+Great guidelines to finding the right tags are in [rvest tutorial on Youtube](https://www.youtube.com/watch?v=4IYfYx4yoAI)
+
+
+# Solution
+First, install a handful of classic R packages and load their libraries:
+
+- `rvest` for web-scraping
+- `dplyr` for data-wrangling
+- `tidyr` for data transformation
+- `stringr` for string manipulation
+- `janitor` for clean headers that your OCD will love you for
+
+
+```{r libraries, warning=FALSE, message=FALSE}
+library(rvest)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(janitor)
+```
+
+
+## Scrape the data
+
+Next, learn how scrape the content of the website and extract the HTML table:
+```{r url}
+url <- "http://web.archive.org/web/20200502072010/https://killedbypolice.net/kbp2020"
+# scrape the website
+url_html <- read_html(url)
+```
+
+Option 1: you can extract the individual rows from the HTML table by using the tag <tr> as argument in the html_nodes() function. BUT this makes each row into an element in a character vector, which would require extra cleaning, specifically splitting by newline \n.
+
+```{r scrape-rows}
+whole_table <- url_html %>% 
+ html_nodes("tr") %>%
+ html_text(trim = FALSE) 
+head(whole_table)
+```
+
+Option 2: you extract individual cells from the HTML table by using the tag <td> as an argument in the html_nodes() function.  BUT this creates a character element out of each table cell, which would require extra wrangling; specifically concatenating by timestamp...
+
+```{r scrape-cells}
+whole_table <- url_html %>% 
+ html_nodes("td") %>%
+ html_text(trim = FALSE) 
+head(whole_table)
+```
+
+
+Option 3 is the winner, at least for me. It let's us extract the whole HTML table through the <table> tag. Well, to be precise it loads the html table into a list not a dataframe, but we can unlist the resulting list and coerce it into a dataframe, and that's less work than options 1 and 2 above, so vaersgo!
+
+```{r scrape-table}
+whole_table <- url_html %>% 
+ html_nodes("table") %>%
+ html_table()  #str(whole_table) turns out to be a list
+str(whole_table)
+whole_table[[1]]
+whole_table
+```
+
+If you run a `str()` on the resulting `whole_table`, you will see that it is a list of 1 tibble with unnamed elements marked by numbers in double brackets, such as [[1]]. 
+What is a list? A table-like looking structure that needs one more transformation (in this case, unlisting) before it becomes a useful dataframe. 
+
+```{r html-to-df}
+new_table <- do.call(cbind,unlist(whole_table, recursive = FALSE)) 
+head(new_table)
+```
+The line above takes the downloaded html table, unlists it and and then combine the individual elements as columns. 
+It may look ugly, but that's what happens when there is a structure you are not used to routinely handle. It took me 2 hours at the first time to figure out how to best handle the list.
+In 2022, you may not even need to unlist the rvest table as it will be a list containing a single tibble - you are the judge of that. It will truly matter only once we start to automate and repeat this step for every following/preceding year. 
+
+If you want to read more about handling lists, here are two good stackoverflow threads:  https://stackoverflow.com/questions/16300344/how-to-flatten-a-list-of-lists
+https://stackoverflow.com/questions/4227223/convert-a-list-to-a-data-frame
+
+Now we are done with the scraping and have the data from one database sheet in a dataframe. All columns are character class, but we can handle datatype conversion later, once we have all the data and are ready for analysis. 
+
+
+## Automate the scraping!
+
+Now, lets combine the above steps into a single function that we repeat/loop in order to read all the tables for all the sequential websites.
+
+First, we create a single function to scrape a table from one annual page
+
+```{r scrape-function}
+scrape_police_kill <- function(website){
+	url <- read_html(website)
+	annual_table <- url %>% 
+ 			html_nodes("table") %>%
+ 			html_table()  # result is a list
+  annual_table <- do.call(cbind,unlist(annual_table, recursive = FALSE))
+ }
+
+# Test that the function works on year 2018
+
+table2018 <- scrape_police_kill("https://killedbypolice.net/kbp2018")
+table2018 %>% 
+	head()
+```
+
+Next, we write a loop to apply the `scrape_police_kill()` function to sequential years from 2013 on:
+```{r loop}
+# Create a container for the results
+mastertable=NULL  # we need to create an empty container
+
+# Loop over the years to iterate the scraping
+for (year in 2013:2020){  
+	print(year) # let's check which year we are in
+	url <- "http://web.archive.org/web/20200502072010/https://killedbypolice.net/kbp"   # the annual URLs end with "kbp2017" ,etc., so make sure to strip the year so it can be replaced
+	website <- paste0(url,year)  # here we bind the year to the website to form the URL
+	annual_table <- scrape_police_kill(website) # here we apply the scraping function
+	mastertable <- rbind(mastertable, annual_table) # we add the scraped results from the given year to our master dataset
+	}
+head(mastertable,2)
+tail(mastertable)
+```
+Well done! You have scraped some 7 years of data from an online database. But sadly, data never comes in analysis-ready format. It needs some additional TLC (tender, loving care).
+
+## Cleaning scraped data
+
+Now that you have some data, you need to check whether it is complete and consistent!
+Ask some questions about and of it,e.g.:
+
+- What kind of structure is the resulting `mastertable`? 
+
+- Is the `Date` column data formatted consistently? 
+- What is the `*` column? 
+- How are missing data represented?
+
+The dataset is currently a character matrix, which is not super convenient. Let's cast it to tibble so we can clean it up
+
+```{r clean-data}
+mastertable <- as_tibble(mastertable)
+str(mastertable)
+```
+
+
+### Make `Age` column numeric and relabel the '*' column to `Method`
+
+Most of the columns are fine containing characters, but `Age` should be a number and `*` needs renaming.
+
+```{r wrangle-columns, message = FALSE, warning=FALSE}
+library(tidyverse)
+data <- mastertable %>% 
+	mutate(Age = as.numeric(Age))  %>% 
+	rename(Method = "*") 
+```
+You will get some coercion in the Age column as missing values are converted to NAs.
+
+## Cleanup the dates with `lubridate` package and `grepl()`
+
+Date column datatype is character and needs to be a date. But first, lets look how consistent the Date column values really are.
+
+```{r check-dates}
+mastertable$Date[c(30:40, 70:80)]
+tail(unique(mastertable$Date))
+```
+Check for inter-annual differences in how the date was formatted. 
+The Date format is MM/DD/YYYY in 2013-2014, during the early years of recording , switching to ISO-compliant format YYYY-MM-DD from 2015 on.  These two types of formatting need to be streamlined. `Lubridate` library and `grepl()` can help with the cleaning here.
+
+```{r clean-dates, warning = FALSE}
+library(lubridate)
+
+# Adapt this pipeline to any other inconsistent dates you discover
+data <- data %>%
+	mutate(Date =
+			case_when(
+				grepl("201[34]", Date) ~ mdy(Date),
+				# convert dates that contain 2013 or 2014 into mdy format
+				!grepl("201[34]",Date) ~ ymd(Date)),
+					Year = year(Date))
+				# convert all other dates ymd format
+
+# Create a new column called "Year" from the Date for plotting
+# data <- data %>% 
+# 	mutate(Year = year(Date))  
+
+tail(data$Year)
+class(data$Date)
+class(data$Year)
+length(which(is.na(data$Date)))
+length(which(is.na(data$Year)))
+
+```
+### Write result to file
+
+Now that the data looks half decent, we can export it to a file. 
+```{r write-to-csv}
+write_csv(data,"data/policekillings202210.csv")
+```
+
+
+## Analyze Age!
+
+The most common age to be killed by police is in the late twenties and early thirties, and this has not changed much over time. 
+You will need `ggridges` and `statebin` packages here
+
+```{r plot-age}
+library(ggplot2)
+library(ggridges)
+
+data <- read_csv("data/policekillings202210.csv")
+data %>% 
+  filter(Gender %in% c("F", "M", "T")) %>% 
+  filter(!is.na(Year)) %>% 
+  ggplot(aes(x = Age,
+             y = factor(Year),
+             fill = Gender)) +
+  geom_density_ridges(alpha = 0.5, 
+                      scale = 0.9)  +
+  theme_ridges(font_size = 10) +
+  scale_x_continuous(breaks = seq(0, 100, 10),
+                     labels = seq(0, 100, 10)) +
+  xlab("Age at death (years)") +
+  ylab("Year") +
+  theme(axis.title = element_text(size = 14))
+```
+
+We can see, however, that with time the age is centering more around 30 rather than 20. What is happening in 2014 with women around 80 years?? 
+
+### Race
+Of the three ethnic groups that make up most of the deaths, Black and Latino people tend to be younger than White people when they are killed by police. 
+
+```{r plot-race}
+library(tidyverse)
+
+data %>% 
+  filter(Race %in% c("B", "W", "L")) %>% 
+  filter(!is.na(Year)) %>% 
+  ggplot(aes(x = Age,
+             y = factor(Year),
+             fill = Race)) +
+  geom_density_ridges(alpha = 0.6, 
+                      scale = 0.9)  +
+  theme_ridges(font_size = 10) +
+  scale_x_continuous(breaks = seq(0, 100, 10),
+                     labels = seq(0, 100, 10)) +
+  xlab("Age at death (years)") +
+  ylab("Year") +
+  theme(axis.title = element_text(size = 14))
+```
+
+
+## Method 
+By far the most common way that people are killed by police is with a gun. Deaths by vehicle involve women more often than men. Other methods are less common, and frankly, I do not know what the acronyms stand for (R, T, U..) 
+```{r plot-method}
+data %>% 
+  filter(!is.na(Year)) %>% 
+  filter(Method != "NA") %>% 
+  filter(Gender %in% c("M", "F", NA)) %>% 
+  group_by(Year, 
+           Gender,
+           Method) %>% 
+  tally() %>% 
+  mutate(perc = n / sum(n) * 100)  %>% 
+  ggplot(aes(Method,
+             perc,
+             fill = Gender)) +
+  geom_col() +
+  facet_grid(Gender~Year) +
+  theme_minimal(base_size = 10) +
+  xlab("Method of killing") +
+  ylab("Percentage of all\npeople killed by police\nby gender") 
+```
+
+
+## Map casualties by state
+
+In 2016, the state with the largest number of people killed by police was California.
+
+
+```{r map 2016}
+#install.packages(c("statebins", "viridis"))
+library(statebins) # using GitHub version
+library(viridis)
+
+# we need to convert state abbreviations to state names for the statebins function
+state_abb <- data_frame(state_name = state.name,
+                        state_abb = state.abb)
+
+# we need to add the state popluations so we can get a proportion of people in each state
+# we got this from https://www2.census.gov/programs-surveys/popest/tables/2010-2016/state/totals/nst-est2016-01.xlsx
+state_populations <- readr::read_csv("data-raw/nst-est2016-01.csv")
+
+# clean it a little
+state_populations <-  
+  state_populations %>% 
+  mutate(state_name = gsub("\\.", "", X__1)) %>%
+  left_join(state_abb)
+
+# compute deaths by state and as deaths per 1000 people in each state
+by_state16 <- data %>% 
+  filter(Year == 2016) %>% 
+  group_by(State) %>% 
+  tally() %>% 
+  left_join(state_abb, by = c('State' = 'state_abb')) %>% 
+  filter(!is.na(state_name)) %>% 
+  left_join(state_populations) %>% 
+  mutate(per_n_people = (n / `2016`) * 1000000)
+
+# plot 'statebin' style map
+ggplot(by_state16, 
+       aes(state = state_name, 
+           fill = n)) +
+  geom_statebins() +
+  coord_equal() +
+  scale_fill_viridis() +
+  theme_statebins() +
+  labs(title = "Total number of people killed by police \nin each state in 2016") +
+  theme(legend.title=element_blank()) 
+```
+
+
+The difference between 2016 and 2019 is hardly visible, with the exception of Texas. I downloaded this census on 20 July from https://www2.census.gov/programs-surveys/popest/tables/2010-2019/state/asrh/
+
+```{r map 2019}
+state_population19 <- readr::read_csv("data-raw/sc-est2019-alldata5.csv")
+
+# clean it a little
+state_pop17_19 <- state_population19 %>% 
+	group_by(NAME) %>% 
+	summarize(pop2017= sum(POPESTIMATE2017), pop2018 = sum(POPESTIMATE2018), pop2019=sum(POPESTIMATE2019)) %>% 
+	rename(state_name = NAME)
+
+state_pop17_19 %>% 
+	select(state_name, pop2017) %>% 
+	glimpse()
+
+# compute deaths by state and as deaths per 1000 people in each state
+by_state19 <- data %>% 
+  filter(Year == 2019) %>% 
+  group_by(State) %>% 
+  tally() %>% 
+  left_join(state_abb, by = c('State' = 'state_abb')) %>% 
+  filter(!is.na(state_name)) %>% 
+  left_join(state_pop17_19) %>% 
+  mutate(per_n_people = (n / `pop2019`) * 1000000)
+
+# plot 'statebin' style map
+ggplot(by_state19, 
+       aes(state = state_name, 
+           fill = n)) +
+  geom_statebins() +
+  coord_equal() +
+  scale_fill_viridis() +
+  theme_statebins() +
+  labs(title = "Total number of people killed by police \nin each state in 2019") +
+  theme(legend.title=element_blank()) 
+```
+
+
+Let's now divide the totals by the number of people in each state: in 2016, New Mexico and Alaska have the highest proportions of people killed by police.  
+
+```{r ratios by state2016}
+ggplot(by_state16, 
+       aes(state = state_name, 
+           fill = per_n_people)) +
+  geom_statebins() +
+  coord_equal() +
+  scale_fill_viridis() +
+  theme_statebins() +
+  labs(title = "Number of people killed by police in each state in 2016,\nper 1,000,000 people")  +
+  theme(legend.title=element_blank()) 
+```
+
+In 2019 the primacy still goes to least populous state of Alaska, but New Mexico, Oklahoma and West Virginia follow in tight succession (while Texas stands at 1 per 100,000)
+
+```{r ratios by state2019}
+ggplot(by_state19, 
+       aes(state = state_name, 
+           fill = per_n_people)) +
+  geom_statebins() +
+  coord_equal() +
+  scale_fill_viridis() +
+  theme_statebins() +
+  labs(title = "Number of people killed by police in each state in 2019,\nper 1,000,000 people")  +
+  theme(legend.title=element_blank()) 
+```
+
+Now it is your turn. Apply the webscraping part of this script to a subject of your own! (But consider what you can use the output for first :)
+
+#My webscraping experiment
+Since there was the option 2.2) where you can scrape data of my interest, I chose that option to practice the webscrabing exercise. Though it doens't illustrate social challenges as the police killings from the former exercise, it shows some statistics from one of my interest: Eurovision. 
+
+I like watching the Eurovision and have been watching the show from a young age. Therefore I want to scrape data from the Eurovision wikipedia-page over the winners of the Eurovision Songcontest. Afterwards I want to visualize which countries has won the most times. 
+
+#Web Scraping
+First I have to scrape the data from the website, where I'm using Wikipedia: 
+
+```{r}
+library(rvest)
+
+url <- "https://en.wikipedia.org/wiki/List_of_Eurovision_Song_Contest_winners"
+webpage <- read_html(url)
+```
+
+I use the html_nodes() function to select the winners table:
+```{r}
+winners_table <- html_nodes(webpage, "table")
+```
+
+Then I extract the data from the table:
+```{r}
+winners_data <- html_table(winners_table)[[1]]
+```
+After many try-and-errors I noticed that I couldn't make the plot without making a dataframe over the winners. So first I make a count:
+```{r}
+library(dplyr)
+
+winners_count <- winners_data %>%
+  count(Country)
+```
+
+Then I can make my visualization, where I use ggplot to make the chart. 
+I use my new dataframe over the winners, where the countries is on the x axis and number of wins is on the y axis. 
+
+```{r}
+library(ggplot2)
+
+library(ggplot2)
+ggplot(winners_count, aes(x = reorder(Country, -n), y = n)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  ggtitle("Eurovision Winners by Country") +
+  xlab("Country") +
+  ylab("Number of wins") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+Then I become clear that Ireland, Sweden, France, Luxembourg and the Netherlands are the five most winning countries in the Eurovision Songcontext
